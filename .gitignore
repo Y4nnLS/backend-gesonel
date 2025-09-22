@@ -38,3 +38,6 @@ temp/
 .cache/
 
 audios/
+.venv/
+venv/
+__pycache__/
