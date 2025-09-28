@@ -11,6 +11,9 @@ class AudioBasic(BaseModel):
     class Config:
         from_attributes = True  # Pydantic v2
 
+class AudioListResponse(BaseModel):
+    items: list[AudioBasic]
+    totalRecords: int = Field(..., description="Total de registros que atendem aos filtros (ignora paginação)")
 
 # Entrada para criação
 class AudioCreate(BaseModel):

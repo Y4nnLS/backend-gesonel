@@ -1,33 +1,51 @@
 import uuid
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
 from app.api.core.db import get_db
 from app.api.models.audio_file import AudioFile
-from app.api.schemas.audio import AudioBasic, AudioCreate, AudioUpdate
+from app.api.schemas.audio import AudioBasic, AudioCreate, AudioUpdate, AudioListResponse
 
 router = APIRouter(prefix="/v1/audios", tags=["audios"])
 
 # ---------- READ ----------
 
-@router.get("", response_model=list[AudioBasic])
+@router.get("", response_model=AudioListResponse)
 def list_audios(
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    dataset: str | None = None,
-    label: str | None = Query(None, alias="emotion_label"),
+    limit: Optional[int] = Query(None, ge=1, le=500),   
+    offset: Optional[int] = Query(None, ge=0),
+    dataset: Optional[str] = None,
+    label: Optional[str] = Query(None, alias="emotion_label"),
     db: Session = Depends(get_db),
 ):
-    stmt = select(AudioFile)
+    # Monta filtros
+    conds = []
     if dataset:
-        stmt = stmt.where(AudioFile.dataset == dataset)
+        conds.append(AudioFile.dataset == dataset)
     if label:
-        stmt = stmt.where(AudioFile.emotion_label == label)
-    stmt = stmt.offset(offset).limit(limit)
-    rows = db.execute(stmt).scalars().all()
-    return rows
+        conds.append(AudioFile.emotion_label == label)
+
+    # totalRecords (mesmos filtros, sem offset/limit)
+    total_stmt = select(func.count(AudioFile.id))
+    if conds:
+        total_stmt = total_stmt.where(*conds)
+    totalRecords = db.execute(total_stmt).scalar_one()
+
+    # Query principal
+    stmt = select(AudioFile)
+    if conds:
+        stmt = stmt.where(*conds)
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    items = db.execute(stmt).scalars().all()
+    return {"items": items, "totalRecords": totalRecords}
+
 
 
 @router.get("/{audio_id}", response_model=AudioBasic)
