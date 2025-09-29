@@ -6,6 +6,8 @@ import os
 
 from app.api.v1.endpoints.audios import router as audios_router
 from app.api.v1.endpoints.realtime import router as realtime_router
+from app.api.v1.endpoints.predict import router as predict_router
+
 # app/main.py (logo após os imports)
 import logging
 logging.basicConfig(
@@ -46,3 +48,4 @@ def home():
 
 app.include_router(audios_router)
 app.include_router(realtime_router)
+app.include_router(predict_router)

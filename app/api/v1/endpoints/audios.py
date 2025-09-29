@@ -1,15 +1,25 @@
 import uuid
+import os
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
 
 from app.api.core.db import get_db
-from app.api.models.audio_file import AudioFile
 from app.api.schemas.audio import AudioBasic, AudioCreate, AudioUpdate, AudioListResponse
 
+from app.api.crud.audio_file import (
+    create_audio_file,
+    get_audio_file,
+    list_audio_files,
+    update_audio_file,
+    delete_audio_file
+)
+
 router = APIRouter(prefix="/v1/audios", tags=["audios"])
+
+UPLOAD_DIR = "db-stack/audios/uploaded"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---------- READ ----------
 
@@ -22,110 +32,76 @@ def list_audios(
     db: Session = Depends(get_db),
 ):
     # Monta filtros
-    conds = []
+    items = list_audio_files(db)
+    # Filtros e paginação podem ser implementados dentro da função list_audio_files se desejar
+    # Aqui está um filtro simples em Python, mas o ideal é filtrar no SQL
     if dataset:
-        conds.append(AudioFile.dataset == dataset)
+        items = [audio for audio in items if audio.dataset == dataset]
     if label:
-        conds.append(AudioFile.emotion_label == label)
-
-    # totalRecords (mesmos filtros, sem offset/limit)
-    total_stmt = select(func.count(AudioFile.id))
-    if conds:
-        total_stmt = total_stmt.where(*conds)
-    totalRecords = db.execute(total_stmt).scalar_one()
-
-    # Query principal
-    stmt = select(AudioFile)
-    if conds:
-        stmt = stmt.where(*conds)
+        items = [audio for audio in items if audio.emotion_label == label]
+    totalRecords = len(items)
     if offset is not None:
-        stmt = stmt.offset(offset)
+        items = items[offset:]
     if limit is not None:
-        stmt = stmt.limit(limit)
-
-    items = db.execute(stmt).scalars().all()
+        items = items[:limit]
     return {"items": items, "totalRecords": totalRecords}
-
-
 
 @router.get("/{audio_id}", response_model=AudioBasic)
 def get_audio_by_id(audio_id: uuid.UUID, db: Session = Depends(get_db)):
-    stmt = select(AudioFile).where(AudioFile.id == audio_id)
-    obj = db.execute(stmt).scalar_one_or_none()
+    obj = get_audio_file(db, str(audio_id))
     if obj is None:
         raise HTTPException(status_code=404, detail="Áudio não encontrado")
     return obj
 
 # ---------- CREATE ----------
 
-# ... imports e router iguais ...
-
-# ---------- UPLOAD (antes era create) ----------
 @router.post(
-    "/upload",
+    "/postAudio",
     response_model=AudioBasic,
     status_code=status.HTTP_201_CREATED,
-    operation_id="uploadAudio",  # nome exato no OpenAPI
+    operation_id="uploadAudio",
 )
-def upload_audio(payload: AudioCreate, db: Session = Depends(get_db)):
-    obj = AudioFile(
-        rel_path=payload.rel_path,
-        sha256=payload.sha256,
-        format=payload.format,
-        duration_s=payload.duration_s,
-        sample_rate=payload.sample_rate,
-        channels=payload.channels,
-        dataset=payload.dataset,
-        speaker_id=payload.speaker_id,
-        emotion_label=payload.emotion_label,
-        split=payload.split,
-        augment_pipeline=payload.augment_pipeline,
+async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    file_location = os.path.join(UPLOAD_DIR, file.filename)
+    with open(file_location, "wb") as buffer:
+        buffer.write(await file.read())
+    # Crie o objeto AudioCreate com os metadados e caminho relativo
+    audio_data = AudioCreate(
+        filename=file.filename,
+        rel_path=file_location,
+        duration_s=0.0  # Preencha conforme necessário
     )
-    db.add(obj)
     try:
-        db.commit()
-    except IntegrityError as e:
-        db.rollback()
+        obj = create_audio_file(db, audio_data)
+    except Exception as e:
         raise HTTPException(status_code=409, detail="Conflito: sha256 já existe") from e
-    db.refresh(obj)
     return obj
 
+# ---------- DOWNLOAD ----------
+@router.get("/download/{audio_id}")
+def download_audio_file(audio_id: str, db: Session = Depends(get_db)):
+    audio_obj = get_audio_file(db, audio_id)
+    if not audio_obj:
+        raise HTTPException(status_code=404, detail="Áudio não encontrado")
+    file_path = audio_obj.rel_path
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Arquivo físico não encontrado")
+    return FileResponse(path=file_path, filename=audio_obj.filename, media_type="audio/wav")
 
-# ---------- UPDATE (PUT: substitui campos do recurso) ----------
+# ---------- UPDATE ----------
 
 @router.put("/{audio_id}", response_model=AudioBasic)
 def update_audio(audio_id: uuid.UUID, payload: AudioUpdate, db: Session = Depends(get_db)):
-    obj = db.get(AudioFile, audio_id)
+    obj = update_audio_file(db, str(audio_id), payload)
     if obj is None:
         raise HTTPException(status_code=404, detail="Áudio não encontrado")
-
-    obj.rel_path = payload.rel_path
-    obj.sha256 = payload.sha256
-    obj.format = payload.format
-    obj.duration_s = payload.duration_s
-    obj.sample_rate = payload.sample_rate
-    obj.channels = payload.channels
-    obj.dataset = payload.dataset
-    obj.speaker_id = payload.speaker_id
-    obj.emotion_label = payload.emotion_label
-    obj.split = payload.split
-    obj.augment_pipeline = payload.augment_pipeline
-
-    try:
-        db.commit()
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Conflito: sha256 já existe") from e
-    db.refresh(obj)
     return obj
 
 # ---------- DELETE ----------
 
 @router.delete("/{audio_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_audio(audio_id: uuid.UUID, db: Session = Depends(get_db)):
-    obj = db.get(AudioFile, audio_id)
+    obj = delete_audio_file(db, str(audio_id))
     if obj is None:
         raise HTTPException(status_code=404, detail="Áudio não encontrado")
-    db.delete(obj)
-    db.commit()
     return None

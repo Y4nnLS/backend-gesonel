@@ -43,3 +43,9 @@ class AudioUpdate(BaseModel):
     emotion_label: Optional[str] = Field(None, max_length=32)
     split: Optional[str] = Field(None, max_length=8)
     augment_pipeline: Optional[str] = None
+
+class AudioFileSchema(BaseModel):
+    id: str
+    filename: str
+    rel_path: str
+    duration_s: float

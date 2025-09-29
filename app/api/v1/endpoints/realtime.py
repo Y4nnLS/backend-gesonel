@@ -12,7 +12,7 @@ router = APIRouter(tags=["realtime"])
 import logging, asyncio
 logger = logging.getLogger("realtime")
 
-@router.websocket("/ws/audio-updates")
+@router.websocket("/ws/stream")
 async def ws_audio_updates(ws: WebSocket):
     await manager.connect(ws)
     logger.info("[WS] connect")
@@ -39,7 +39,7 @@ class RealtimeInfo(BaseModel):
 @router.get("/v1/realtime", response_model=RealtimeInfo, summary="Info do canal realtime")
 def realtime_info():
     return RealtimeInfo(
-        websocket_url="/ws/audio-updates",
+        websocket_url="/ws/stream",
         description="Mensagens de simulação ou do banco (quando ligado).",
         example_payload={
             "op": "UPDATE",
@@ -54,12 +54,12 @@ def realtime_info():
 
 _TEST_HTML = """
 <!doctype html><meta charset="utf-8"><title>WS Test</title>
-<h3>WebSocket Test – /ws/audio-updates</h3>
+<h3>WebSocket Test – /ws/stream</h3>
 <pre id="log" style="background:#111;color:#0f0;padding:12px;max-height:60vh;overflow:auto;"></pre>
 <script>
   const log = (m)=>{const el=document.getElementById('log'); el.textContent+=m+"\\n"; el.scrollTop=el.scrollHeight;}
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(proto + '://' + location.host + '/ws/audio-updates');
+  const ws = new WebSocket(proto + '://' + location.host + '/ws/stream');
   ws.onopen = ()=>log('open');
   ws.onmessage = e=>log('msg: ' + e.data);
   ws.onclose = ()=>log('close');
