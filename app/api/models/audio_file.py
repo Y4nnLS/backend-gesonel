@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Text, String, Integer, Numeric, Index
+from sqlalchemy import Text, String, Integer, Numeric, Index, DateTime, JSON
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 class Base(DeclarativeBase):
@@ -21,7 +22,17 @@ class AudioFile(Base):
     emotion_label: Mapped[str | None] = mapped_column(String(32))
     split: Mapped[str | None] = mapped_column(String(8))
     augment_pipeline: Mapped[str | None] = mapped_column(Text)
+    
+    # Novos campos para processamento
+    processing_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, processing, completed, failed
+    predicted_emotion: Mapped[str | None] = mapped_column(String(32))
+    confidence_score: Mapped[float | None] = mapped_column(Numeric(5, 4))
+    processing_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    processing_metadata: Mapped[dict | None] = mapped_column(JSON)
 
 Index("ix_audio_rel_path", AudioFile.rel_path)
 Index("ix_audio_dataset", AudioFile.dataset)
 Index("ix_audio_label", AudioFile.emotion_label)
+Index("ix_audio_status", AudioFile.processing_status)
