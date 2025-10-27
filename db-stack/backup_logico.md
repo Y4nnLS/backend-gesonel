@@ -210,3 +210,12 @@ docker exec -t pg-db pg_restore -U appuser -d appdb --clean --if-exists /tmp/app
 ---
 
 Pronto! Com esse fluxo você compartilha/migra seu banco **com segurança** e  **sem dor de cabeça** . Se quiser, eu acrescento uma seção de **“restore parcial”** (apenas um schema/tabela) e outra de **“backup agendado”** com exemplos para PowerShell e cron.
+
+
+
+comando para rodar o ingest_audio
+$env:DATABASE_URL="postgresql://appuser:secret@localhost:5432/appdb"
+python db-stack/tools/ingest_audio.py --audio-root "db-stack/audios" --recursive --infer-from-path 
+
+adicionar a linha abaixo para simular a ingestão sem alterar o banco.
+--dry-run
