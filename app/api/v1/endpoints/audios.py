@@ -4,7 +4,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-
+from pathlib import Path
+import mimetypes
 from app.api.core.db import get_db
 from app.api.schemas.audio import AudioBasic, AudioCreate, AudioUpdate, AudioListResponse
 
@@ -78,16 +79,40 @@ async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_d
     return obj
 
 # ---------- DOWNLOAD ----------
+AUDIO_ROOT = Path("db-stack/audios").resolve()
+
+def safe_join(base: Path, rel_path: str) -> Path:
+    rel_norm = (rel_path or "").replace("\\", "/")
+    p = (base / rel_norm).resolve()
+    if base not in p.parents and p != base:
+        raise HTTPException(status_code=400, detail="Caminho inválido")
+    return p
+
 @router.get("/download/{audio_id}")
-def download_audio_file(audio_id: str, db: Session = Depends(get_db)):
-    audio_obj = get_audio_file(db, audio_id)
+def download_audio_file(audio_id: uuid.UUID, db: Session = Depends(get_db)):
+    audio_obj = get_audio_file(db, str(audio_id))
     if not audio_obj:
         raise HTTPException(status_code=404, detail="Áudio não encontrado")
-    file_path = audio_obj.rel_path
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Arquivo físico não encontrado")
-    return FileResponse(path=file_path, filename=audio_obj.filename, media_type="audio/wav")
 
+    file_path = safe_join(AUDIO_ROOT, audio_obj.rel_path or "")
+    if not file_path.exists():
+        # tenta adicionar .wav caso o rel_path esteja sem extensão
+        cand = file_path.with_suffix(".wav")
+        if cand.exists():
+            file_path = cand
+        else:
+            raise HTTPException(status_code=404, detail="Arquivo físico não encontrado")
+
+    # Nome de download: basename do rel_path (garante .wav)
+    download_name = Path(audio_obj.rel_path).name or str(audio_id)
+    if not download_name.lower().endswith(".wav"):
+        download_name += ".wav"
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="audio/wav",
+        filename=download_name,
+    )
 # ---------- UPDATE ----------
 
 @router.put("/{audio_id}", response_model=AudioBasic)
