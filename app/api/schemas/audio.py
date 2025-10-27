@@ -1,5 +1,6 @@
 import uuid
 from typing import Optional
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 # Saída básica (listagem / getById)
@@ -7,6 +8,11 @@ class AudioBasic(BaseModel):
     id: uuid.UUID
     rel_path: str
     duration_s: Optional[float] = None
+    processing_status: str
+    predicted_emotion: Optional[str] = None
+    confidence_score: Optional[float] = None
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True  # Pydantic v2
