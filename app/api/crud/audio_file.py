@@ -1,9 +1,12 @@
 from sqlalchemy.orm import Session
 from app.api.models.audio_file import AudioFile
 from app.api.schemas.audio import AudioFileSchema
+import uuid
 
 def create_audio_file(db: Session, audio: AudioFileSchema):
     db_obj = AudioFile(**audio.dict())
+    if getattr(db_obj, "id", None) is None:
+        db_obj.id = uuid.uuid4()
     db.add(db_obj)
     db.commit()
     db.refresh(db_obj)

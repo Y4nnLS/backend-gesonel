@@ -30,16 +30,24 @@ def list_audios(
     offset: Optional[int] = Query(None, ge=0),
     dataset: Optional[str] = None,
     label: Optional[str] = Query(None, alias="emotion_label"),
+    pending: Optional[bool] = Query(
+        None,
+        description="True: somente pending; False: tudo que não é pending; None: todos",
+    ),
     db: Session = Depends(get_db),
 ):
-    # Monta filtros
     items = list_audio_files(db)
-    # Filtros e paginação podem ser implementados dentro da função list_audio_files se desejar
-    # Aqui está um filtro simples em Python, mas o ideal é filtrar no SQL
+
     if dataset:
-        items = [audio for audio in items if audio.dataset == dataset]
+        items = [a for a in items if a.dataset == dataset]
     if label:
-        items = [audio for audio in items if audio.emotion_label == label]
+        items = [a for a in items if a.emotion_label == label]
+
+    if pending is True:
+        items = [a for a in items if (a.processing_status or "").lower() == "pending"]
+    elif pending is False:
+        items = [a for a in items if (a.processing_status or "").lower() != "pending"]
+
     totalRecords = len(items)
     if offset is not None:
         items = items[offset:]
@@ -72,10 +80,10 @@ async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_d
         rel_path=file_location,
         duration_s=0.0  # Preencha conforme necessário
     )
-    try:
-        obj = create_audio_file(db, audio_data)
-    except Exception as e:
-        raise HTTPException(status_code=409, detail="Conflito: sha256 já existe") from e
+    # try:
+    obj = create_audio_file(db, audio_data)
+    # except Exception as e:
+    #     raise HTTPException(status_code=409, detail="Conflito: sha256 já existe") from e
     return obj
 
 # ---------- DOWNLOAD ----------
@@ -115,12 +123,12 @@ def download_audio_file(audio_id: uuid.UUID, db: Session = Depends(get_db)):
     )
 # ---------- UPDATE ----------
 
-@router.put("/{audio_id}", response_model=AudioBasic)
-def update_audio(audio_id: uuid.UUID, payload: AudioUpdate, db: Session = Depends(get_db)):
-    obj = update_audio_file(db, str(audio_id), payload)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Áudio não encontrado")
-    return obj
+# @router.put("/{audio_id}", response_model=AudioBasic)
+# def update_audio(audio_id: uuid.UUID, payload: AudioUpdate, db: Session = Depends(get_db)):
+#     obj = update_audio_file(db, str(audio_id), payload)
+#     if obj is None:
+#         raise HTTPException(status_code=404, detail="Áudio não encontrado")
+#     return obj
 
 # ---------- DELETE ----------
 
