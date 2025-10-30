@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class EmotionRecognitionService:
-    def __init__(self, models_path: str = "C:/Users/FelipeFrancoPinheiro/Documents/modelosIA"):
+    def __init__(self, models_path: str = "predictModels"):
         self.models_path = models_path
         self.model = None
         self.label_encoder = None
