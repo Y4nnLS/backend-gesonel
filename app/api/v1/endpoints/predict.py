@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException, status, Depends
-from typing import List
+from typing import List, Optional
 import uuid
 import os
 import logging
@@ -11,10 +11,14 @@ from app.api.services.emotion_service import emotion_service
 from app.api.websocket import manager
 
 from app.api.schemas.predict import EmotionRecordSchema, AnalyzeRequest, AnalyzeResponse
+from app.api.services.models.registry import resolve_models, available_models
+from app.api.services.emotion_multi import infer_with_models
+from app.api.services.results import save_1d_result, save_mm_result
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["predict"])
 
+AUDIO_BASE_DIR = os.getenv("AUDIO_BASE_DIR", "db-stack/audios")
 
 @router.get(
     "/getDados",
@@ -22,7 +26,6 @@ router = APIRouter(tags=["predict"])
     summary="Recupera registros de emoção por modelo",
 )
 def get_dados(modelo: str = Query(..., description="Nome ou ID do modelo")):
-    # TODO: Buscar registros no banco filtrando pelo modelo
     dummy = [
         EmotionRecordSchema(
             id="1",
@@ -35,6 +38,9 @@ def get_dados(modelo: str = Query(..., description="Nome ou ID do modelo")):
     ]
     return dummy
 
+@router.get("/models", summary="Lista modelos disponíveis")
+def list_models():
+    return {"models": available_models()}
 
 @router.post(
     "/analyzeAudio",
@@ -53,34 +59,11 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
     if status_atual in ("processing", "queued"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Áudio já está em processamento")
 
-    # 3) Garantir modelo pronto ANTES de tocar no banco
-    if not hasattr(emotion_service, "ensure_ready"):
-        # fallback defensivo: se não tiver ensure_ready(), tenta is_ready() ou assume pronto
-        try:
-            if hasattr(emotion_service, "is_ready") and not emotion_service.is_ready():
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Serviço de reconhecimento de emoção não está pronto",
-                )
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=str(e))
-    else:
-        try:
-            if not emotion_service.ensure_ready():  # retorna False se não carregou
-                detail = getattr(emotion_service, "last_error", None) or "Serviço de reconhecimento de emoção não está pronto"
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
-        except HTTPException:
-            raise
-        except Exception as e:
-            # erro ao carregar o modelo
-            raise HTTPException(status_code=503, detail=str(e))
-
-    # 4) Validar arquivo no disco
-    rel_path = "db-stack/audios/" + audio.rel_path
-    if not rel_path or not os.path.exists(rel_path):
-        # não mexe status se o arquivo sumiu: marca failed explicitamente
+    # 3) Arquivo
+    rel_path = os.path.join(AUDIO_BASE_DIR, audio.rel_path or "")
+    if not os.path.exists(rel_path):
         audio.processing_status = "failed"
-        audio.processing_error = f"Arquivo não encontrado em rel_path: {rel_path!r}"
+        audio.processing_error = f"Arquivo não encontrado: {rel_path!r}"
         db.commit()
         try:
             await manager.broadcast_audio_update(
@@ -92,7 +75,7 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
             pass
         raise HTTPException(status_code=404, detail="Arquivo do áudio não encontrado no servidor")
 
-    # 5) Marca como processing e notifica
+    # 4) Marca processing
     audio.processing_status = "processing"
     audio.processing_error = None
     db.commit()
@@ -100,32 +83,136 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
         await manager.broadcast_audio_update(str(audio_uuid), "processing", {"rel_path": rel_path})
     except Exception:
         pass
-
-    # 6) Inferência + persistência
+    # 5) Inferência
     try:
-        # tenta passar modelo; se não aceitar, chama sem
-        try:
-            result = emotion_service.predict_emotion(rel_path, model=(req.modelo or "default"))
-        except TypeError:
-            result = emotion_service.predict_emotion(rel_path)
+        modelos: Optional[List[str]] = req.modelos
+        if not modelos and req.modelo:
+            modelos = [req.modelo]
 
+        # if modelos:
+        #     modelos_resolvidos = resolve_models(modelos)
+        #     if not modelos_resolvidos:
+        #         raise HTTPException(status_code=400, detail="Nenhum modelo válido informado")
+        #     multi = infer_with_models(rel_path, modelos_resolvidos)
+
+        #     tops = [v["top"] for v in multi.values() if isinstance(v, dict) and "top" in v]
+        #     top = max(set(tops), key=tops.count) if tops else ""
+        #     conf = None
+        #     if top:
+        #         try:
+        #             conf = max(v["scores"][top] for v in multi.values() if "scores" in v and top in v["scores"])
+        #         except Exception:
+        #             conf = None
+
+        #     audio.predicted_emotion = str(top or "")
+        #     audio.confidence_score = float(conf) if conf is not None else None
+        #     if hasattr(audio, "processing_metadata"):
+        #         audio.processing_metadata = {"multi_model": multi}
+        #     audio.processing_status = "completed"
+        #     db.commit()
+
+        #     try:
+        #         await manager.broadcast_audio_update(
+        #             str(audio_uuid), "completed",
+        #             {"rel_path": rel_path, "predicted_emotion": top, "confidence_score": conf, "multi": multi},
+        #         )
+        #     except Exception:
+        #         pass
+
+        #     return AnalyzeResponse(emotion=str(top or ""), confidence=float(conf or 0.0))
+        if modelos:
+            modelos_resolvidos = resolve_models(modelos)
+            if not modelos_resolvidos:
+                raise HTTPException(status_code=400, detail="Nenhum modelo válido informado")
+
+            # Roda múltiplos modelos
+            multi = infer_with_models(rel_path, modelos_resolvidos)
+            # multi esperado (flexível):
+            # {
+            #   "keras_emotion": {"scores": {...}, "top": "happy", "conf": 0.82, "segments": None, "meta": {...}},
+            #   "multimodal":    {"scores": {...}, "top": "neutral","conf": 0.74, "segments": [...], "meta": {...}}
+            # }
+
+            def get_part(d: dict, key: str, default=None):
+                return d.get(key, default) if isinstance(d, dict) else default
+
+            # --- salva 1D (vários aliases aceitáveis) ---
+            one_d_key = None
+            for k in ("keras_emotion", "cnn1d", "model_1d", "keras_1d"):
+                if k in multi: one_d_key = k; break
+            if one_d_key:
+                _r = multi[one_d_key]
+                save_1d_result(
+                    db, audio_uuid,
+                    probs=get_part(_r, "scores", {}) or {},
+                    top_label=get_part(_r, "top"),
+                    confidence=get_part(_r, "conf"),
+                    segments=get_part(_r, "segments"),
+                    metadata={"source": one_d_key, **(get_part(_r, "meta", {}) or {})},
+                    status="done",
+                )
+
+            # --- salva MultiModal (vários aliases aceitáveis) ---
+            mm_key = None
+            for k in ("multimodal", "multi_modal", "mm"):
+                if k in multi: mm_key = k; break
+            if mm_key:
+                _r = multi[mm_key]
+                save_mm_result(
+                    db, audio_uuid,
+                    probs=get_part(_r, "scores", {}) or {},
+                    top_label=get_part(_r, "top"),
+                    confidence=get_part(_r, "conf"),
+                    segments=get_part(_r, "segments"),
+                    metadata={"source": mm_key, **(get_part(_r, "meta", {}) or {})},
+                    status="done",
+                )
+
+            # --- consenso que você já fazia ---
+            tops = [v.get("top") for v in multi.values() if isinstance(v, dict) and v.get("top")]
+            top = max(set(tops), key=tops.count) if tops else ""
+            conf = None
+            if top:
+                try:
+                    conf = max(v["scores"][top] for v in multi.values() if "scores" in v and top in v["scores"])
+                except Exception:
+                    conf = None
+
+            audio.predicted_emotion = str(top or "")
+            audio.confidence_score = float(conf) if conf is not None else None
+            if hasattr(audio, "processing_metadata"):
+                audio.processing_metadata = {"multi_model": multi}
+            audio.processing_status = "completed"
+            db.commit()
+
+            try:
+                await manager.broadcast_audio_update(
+                    str(audio_uuid), "completed",
+                    {"rel_path": rel_path, "predicted_emotion": top, "confidence_score": conf, "multi": multi},
+                )
+            except Exception:
+                pass
+
+            return AnalyzeResponse(emotion=str(top or ""), confidence=float(conf or 0.0))
+
+
+        # modo único (Keras)
+        if not (hasattr(emotion_service, "is_ready") and emotion_service.is_ready()):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="Serviço de reconhecimento de emoção não está pronto")
+
+        result = emotion_service.predict_emotion(rel_path)
         if not isinstance(result, dict):
             raise RuntimeError("Retorno inválido do serviço de emoção (esperado dict)")
 
         emotion = result.get("emotion")
         confidence = result.get("confidence")
-
         if emotion is None or confidence is None:
             raise RuntimeError("Retorno do modelo sem 'emotion' ou 'confidence'")
 
-        try:
-            confidence = float(confidence)
-        except Exception:
-            raise RuntimeError(f"Confidence inválido: {confidence!r}")
-
+        confidence = float(confidence)
         metadata = result.get("metadata")
 
-        # persiste
         audio.predicted_emotion = str(emotion)
         audio.confidence_score = confidence
         if hasattr(audio, "processing_metadata"):
@@ -133,7 +220,6 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
         audio.processing_status = "completed"
         db.commit()
 
-        # notifica via WS
         try:
             await manager.broadcast_audio_update(
                 str(audio_uuid),
@@ -148,7 +234,6 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        # qualquer erro de inferência => failed
         audio.processing_status = "failed"
         audio.processing_error = str(e)
         db.commit()

@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field, ConfigDict
 class AnalyzeRequest(BaseModel):
     # aceita {"audio_id": "..."} no body e mapeia para o campo id
     id: uuid.UUID = Field(alias="audio_id")
-    # modelo opcional (padrão)
-    modelo: Optional[str] = "default"
+    # compat: permite "modelo" simples OU "modelos" (lista ou "all")
+    modelo: Optional[str] = None
+    modelos: Optional[list[str]] = None
 
     # Pydantic v2
     model_config = ConfigDict(populate_by_name=True, extra="ignore")

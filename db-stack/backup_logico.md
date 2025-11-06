@@ -64,14 +64,14 @@ mkdir -p ./backups
 
 ```powershell
 docker exec -t pg-db pg_dump -U appuser -d appdb -F c -f /tmp/appdb.dump
-docker cp pg-db:/tmp/appdb.dump .\backups\appdb.dump
+docker cp pg-db:/tmp/appdb.dump .\db-stack\backups\appdb.dump
 ```
 
 **macOS/Linux**
 
 ```bash
 docker exec -t pg-db pg_dump -U appuser -d appdb -F c -f /tmp/appdb.dump
-docker cp pg-db:/tmp/appdb.dump ./backups/appdb.dump
+docker cp pg-db:/tmp/appdb.dump ./db-stack/backups/appdb.dump
 ```
 
 > Por que `-F c` (formato custom)?

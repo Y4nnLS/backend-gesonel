@@ -1,136 +1,157 @@
 import os
+import time
 import numpy as np
 import librosa
 import tensorflow as tf
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import logging
 
 logger = logging.getLogger(__name__)
 
+def _to_float32(x: np.ndarray) -> np.ndarray:
+    return np.asarray(x, dtype=np.float32, order="C")
+
 class EmotionRecognitionService:
-    def __init__(self, models_path: str = "predictModels"):
-        self.models_path = models_path
-        self.model = None
-        self.label_encoder = None
+    """
+    Serviço Keras (.keras) com dois inputs: [features(T,F), mask(T,1)].
+    - features = MFCC (T x F) com padding
+    - mask[t,0] = 1 para frames reais, 0 para padding
+    """
+    def __init__(self, models_path: Optional[str] = None):
+        self.models_path = models_path or os.getenv("PREDICT_MODELS_PATH", "predictModels")
+        self.model: Optional[tf.keras.Model] = None
+        self.label_encoder: Optional[List[str]] = None
+        os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
         self._load_models()
-    
-    def _load_models(self):
-        """Carrega os modelos de reconhecimento de emoção"""
+
+    def _load_models(self) -> None:
+        model_path = os.path.join(self.models_path, "emotion_recognition_model.keras")
+        encoder_path = os.path.join(self.models_path, "label_encoder_classes.npy")
         try:
-            # Carrega o modelo principal
-            model_path = os.path.join(self.models_path, "emotion_recognition_model.keras")
             if os.path.exists(model_path):
-                self.model = tf.keras.models.load_model(model_path)
-                logger.info("Modelo de reconhecimento de emoção carregado com sucesso")
+                self.model = tf.keras.models.load_model(model_path, compile=False)
+                logger.info(f"[Emotion] Modelo carregado: {model_path}")
             else:
-                logger.warning(f"Modelo não encontrado em: {model_path}")
-            
-            # Carrega o label encoder
-            encoder_path = os.path.join(self.models_path, "label_encoder_classes.npy")
+                logger.warning(f"[Emotion] Modelo NÃO encontrado: {model_path}")
+
             if os.path.exists(encoder_path):
-                self.label_encoder = np.load(encoder_path, allow_pickle=True)
-                logger.info("Label encoder carregado com sucesso")
+                enc = np.load(encoder_path, allow_pickle=True)
+                self.label_encoder = [str(x) for x in enc.tolist()]
+                logger.info(f"[Emotion] Labels carregados: {len(self.label_encoder)} classes")
             else:
-                logger.warning(f"Label encoder não encontrado em: {encoder_path}")
-                
-        except Exception as e:
-            logger.error(f"Erro ao carregar modelos: {e}")
+                logger.warning(f"[Emotion] Labels NÃO encontrados: {encoder_path}")
+        except Exception:
+            logger.exception("[Emotion] Falha ao carregar artefatos")
             raise
-    
-    def extract_mfcc_features(self, audio_path: str, n_mfcc: int = 13) -> tuple:
-        """Extrai características MFCC do áudio"""
-        try:
-            # Carrega o áudio
-            y, sr = librosa.load(audio_path, sr=None)
-            
-            # Extrai MFCC
-            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-            
-            # O modelo espera (260, 40) - vamos ajustar
-            target_frames = 260
-            target_features = 40
-            
-            # Redimensiona para o formato esperado
-            if mfcc.shape[1] > target_frames:
-                mfcc = mfcc[:, :target_frames]
-            else:
-                # Padding se necessário
-                pad_width = target_frames - mfcc.shape[1]
-                mfcc = np.pad(mfcc, ((0, 0), (0, pad_width)), mode='constant')
-            
-            # Se temos menos features que o esperado, duplica
-            if mfcc.shape[0] < target_features:
-                # Duplica as features para chegar ao tamanho esperado
-                repeat_factor = target_features // mfcc.shape[0] + 1
-                mfcc = np.tile(mfcc, (repeat_factor, 1))
-                mfcc = mfcc[:target_features, :]
-            elif mfcc.shape[0] > target_features:
-                # Reduz o número de features
-                mfcc = mfcc[:target_features, :]
-            
-            # Cria máscara para indicar quais frames são válidos
-            mask = np.ones((target_frames, 1))  # Todos os frames são válidos
-            
-            return mfcc.T, mask  # Retorna (features, mask)
-            
-        except Exception as e:
-            logger.error(f"Erro ao extrair características MFCC: {e}")
-            raise
-    
-    def predict_emotion(self, audio_path: str) -> Dict[str, Any]:
-        """
-        Prediz a emoção de um arquivo de áudio
-        
-        Args:
-            audio_path: Caminho para o arquivo de áudio
-            
-        Returns:
-            Dict com a emoção predita, score de confiança e metadados
-        """
-        try:
-            if self.model is None or self.label_encoder is None:
-                raise ValueError("Modelos não foram carregados corretamente")
-            
-            # Extrai características
-            features, mask = self.extract_mfcc_features(audio_path)
-            features = np.expand_dims(features, axis=0)  # Adiciona dimensão do batch
-            mask = np.expand_dims(mask, axis=0)  # Adiciona dimensão do batch
-            
-            # Faz a predição com os dois inputs
-            predictions = self.model.predict([features, mask], verbose=0)
-            
-            # Obtém a classe predita e o score de confiança
-            predicted_class_idx = np.argmax(predictions[0])
-            confidence_score = float(predictions[0][predicted_class_idx])
-            
-            # Converte o índice para o nome da emoção
-            if predicted_class_idx < len(self.label_encoder):
-                predicted_emotion = self.label_encoder[predicted_class_idx]
-            else:
-                predicted_emotion = "unknown"
-            
-            # Metadados adicionais
-            metadata = {
-                "model_used": "emotion_recognition_model.keras",
-                "features_extracted": "MFCC",
-                "n_mfcc": 13,
-                "all_predictions": predictions[0].tolist(),
-                "processing_time": None  # Pode ser adicionado se necessário
-            }
-            
-            return {
-                "emotion": predicted_emotion,
-                "confidence": confidence_score,
-                "metadata": metadata
-            }
-            
-        except Exception as e:
-            logger.error(f"Erro na predição de emoção: {e}")
-            raise
-    
+
     def is_ready(self) -> bool:
-        """Verifica se o serviço está pronto para uso"""
         return self.model is not None and self.label_encoder is not None
 
-# Instância global do serviço
+    def extract_mfcc_features(
+        self,
+        audio_path: str,
+        n_mfcc: int = 13,
+        target_frames: int = 260,
+        target_features: int = 40,
+        normalize: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray, int]:
+        """
+        Retorna (features[T,F], mask[T,1], sr) em float32.
+        """
+        try:
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Áudio não encontrado: {audio_path}")
+
+            y, sr = librosa.load(audio_path, sr=None, mono=True)
+
+            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)  # (n_mfcc, T0)
+            mfcc = mfcc.T  # (T0, n_mfcc)
+
+            T0 = mfcc.shape[0]
+            T_use = min(T0, target_frames)
+
+            feats = np.zeros((target_frames, target_features), dtype=np.float32)
+            feats[:T_use, :min(n_mfcc, target_features)] = mfcc[:T_use, :min(n_mfcc, target_features)]
+
+            if n_mfcc < target_features:
+                reps = int(np.ceil(target_features / n_mfcc))
+                tiled = np.tile(mfcc[:T_use, :n_mfcc], (1, reps))[:, :target_features]
+                feats[:T_use, :] = tiled
+
+            mask = np.zeros((target_frames, 1), dtype=np.float32)
+            mask[:T_use, 0] = 1.0
+
+            if normalize and T_use > 0:
+                valid = feats[:T_use, :]
+                mean = valid.mean(axis=0, keepdims=True)
+                std = valid.std(axis=0, keepdims=True) + 1e-8
+                feats[:T_use, :] = (valid - mean) / std
+
+            return _to_float32(feats), _to_float32(mask), sr
+
+        except Exception:
+            logger.exception("[Emotion] Erro ao extrair MFCC")
+            raise
+
+    def predict_emotion(self, audio_path: str) -> Dict[str, Any]:
+        """
+        Saída:
+        {
+          "emotion": <str>,
+          "confidence": <float>,
+          "scores": {label: prob, ...},
+          "metadata": {...}
+        }
+        """
+        try:
+            if not self.is_ready():
+                raise ValueError("Serviço não pronto (modelo/labels ausentes)")
+
+            t0 = time.perf_counter()
+            feats, mask, sr = self.extract_mfcc_features(audio_path)
+
+            x_feats = feats[None, ...]  # (1,T,F)
+            x_mask = mask[None, ...]    # (1,T,1)
+
+            preds = self.model.predict([x_feats, x_mask], verbose=0)
+            preds = np.asarray(preds, dtype=np.float32)
+
+            if preds.ndim != 2 or preds.shape[0] != 1:
+                raise ValueError(f"Saída inesperada do modelo: shape={preds.shape}")
+
+            p = preds[0]
+            s = float(p.sum())
+            if not np.isfinite(s) or abs(s - 1.0) > 1e-3:
+                e = np.exp(p - p.max())
+                p = e / e.sum()
+
+            labels = self.label_encoder or [str(i) for i in range(len(p))]
+            if len(labels) != len(p):
+                logger.warning(f"[Emotion] nº labels ({len(labels)}) != nº logits ({len(p)})")
+                labels = [str(i) for i in range(len(p))]
+
+            scores = {lbl: float(prob) for lbl, prob in zip(labels, p)}
+            top_idx = int(np.argmax(p))
+            top_label = labels[top_idx]
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+
+            return {
+                "emotion": top_label,
+                "confidence": float(p[top_idx]),
+                "scores": scores,
+                "metadata": {
+                    "model_used": "emotion_recognition_model.keras",
+                    "features_extracted": "MFCC",
+                    "n_mfcc": int(feats.shape[1]),
+                    "sample_rate": sr,
+                    "processing_time_ms": latency_ms,
+                    "input_shapes": {"features": x_feats.shape, "mask": x_mask.shape},
+                },
+            }
+
+        except Exception:
+            logger.exception("[Emotion] Erro na predição")
+            raise
+
+# singleton
 emotion_service = EmotionRecognitionService()
