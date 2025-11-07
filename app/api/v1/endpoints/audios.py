@@ -19,7 +19,7 @@ from app.api.crud.audio_file import (
 
 router = APIRouter(prefix="/v1/audios", tags=["audios"])
 
-UPLOAD_DIR = "db-stack/audios/uploaded"
+UPLOAD_DIR = "D:/audios/uploaded"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---------- READ ----------
@@ -87,7 +87,7 @@ async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_d
     return obj
 
 # ---------- DOWNLOAD ----------
-AUDIO_ROOT = Path("db-stack/audios").resolve()
+AUDIO_ROOT = Path("D:/audios").resolve()
 
 def safe_join(base: Path, rel_path: str) -> Path:
     rel_norm = (rel_path or "").replace("\\", "/")

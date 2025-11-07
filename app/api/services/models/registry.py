@@ -4,11 +4,11 @@ from typing import Dict, Iterable, List, Optional, Type
 
 from .base import BaseEmotionModel
 from .keras_model_1d import KerasEmotionModel
-# from .MULTIMODAL import MULTIMODAL
+from .keras_model_multimodal import KerasMultimodalEmotionModel
 
 _REGISTRY: Dict[str, Type[BaseEmotionModel]] = {
-    KerasEmotionModel.name: KerasEmotionModel,
-    # MULTIMODAL.name: MULTIMODAL,
+    # KerasEmotionModel.name: KerasEmotionModel,
+    KerasMultimodalEmotionModel.name: KerasMultimodalEmotionModel,
 }
 
 def available_models() -> List[str]:

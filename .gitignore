@@ -42,3 +42,6 @@ audios/
 venv/
 __pycache__/
 uploads/
+
+.keras
+predictModels/

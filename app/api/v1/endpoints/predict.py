@@ -18,7 +18,7 @@ from app.api.services.results import save_1d_result, save_mm_result
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["predict"])
 
-AUDIO_BASE_DIR = os.getenv("AUDIO_BASE_DIR", "db-stack/audios")
+AUDIO_BASE_DIR = os.getenv("AUDIO_BASE_DIR", "D:/audios")
 
 @router.get(
     "/getDados",
@@ -154,7 +154,7 @@ async def analyze_audio(req: AnalyzeRequest, db: Session = Depends(get_db)):
 
             # --- salva MultiModal (vários aliases aceitáveis) ---
             mm_key = None
-            for k in ("multimodal", "multi_modal", "mm"):
+            for k in ("keras_multimodal", "multimodal", "multi_modal", "mm"):
                 if k in multi: mm_key = k; break
             if mm_key:
                 _r = multi[mm_key]

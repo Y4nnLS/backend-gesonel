@@ -215,7 +215,7 @@ Pronto! Com esse fluxo você compartilha/migra seu banco **com segurança** e  *
 
 comando para rodar o ingest_audio
 $env:DATABASE_URL="postgresql://appuser:secret@localhost:5432/appdb"
-python db-stack/tools/ingest_audio.py --audio-root "db-stack/audios" --recursive --infer-from-path 
+python db-stack/tools/ingest_audio.py --audio-root "D:/audios" --recursive --infer-from-path 
 
 adicionar a linha abaixo para simular a ingestão sem alterar o banco.
 --dry-run
