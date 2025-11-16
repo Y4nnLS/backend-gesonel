@@ -42,7 +42,7 @@ class AudioBasic(BaseModel):
     mm_status: Optional[str] = None
     mm_predicted_emotion: Optional[str] = None
     mm_confidence_score: Optional[float] = None
-    mm_probs: Optional[Dict[str, float]] = None
+    mm_probs: Optional[Dict[str, Any]] = None
     mm_segments: Optional[Any] = None
     mm_metadata: Optional[Dict[str, Any]] = None
 
